@@ -355,6 +355,14 @@ module lp_account::liquidity_pool {
         @param admin - signer representing the admin of this module
     */
     fun init_module(admin: &signer) {
+        // Retrieve the module's resource account signer
+        let module_signer = signer::resource_account_signer();
+
+        // Create the module's state resource
+        let module_state = create_module_state();
+
+        // Move the module's state resource to the admin
+        move_to(admin, module_state);
 
     }
     
@@ -365,7 +373,35 @@ module lp_account::liquidity_pool {
         @type_param CoinB - the type of the second coin for the liquidity pool
     */  
     public entry fun create_liquidity_pool<CoinA, CoinB>() acquires State {
+        // Check if the liquidity pool already exists
+        let liquidity_pool = state.liquidity_pools.get::<CoinA, CoinB>();
+        if (liquidity_pool != null) {
+            abort("liquidity pool already exists");
+        }
 
+        // Check if CoinA and CoinB exist
+        let coin_a_account = state.accounts.get::<CoinA>();
+        if (coin_a_account == null) {
+            abort("coin A does not exist");
+        }
+        let coin_b_account = state.accounts.get::<CoinB>();
+        if (coin_b_account == null) {
+            abort("coin B does not exist");
+        }
+
+        // Check if CoinA and CoinB are sorted or are equal
+        if (CoinA::type_name() > CoinB::type_name()) {
+            abort("coins must be sorted");
+        }
+        if (CoinA::type_name() == CoinB::type_name()) {
+            abort("coins must be different");
+        }
+
+        // Create the liquidity pool
+        let liquidity_pool = create_liquidity_pool_impl::<CoinA, CoinB>();
+
+        // Add the liquidity pool to the state
+        state.liquidity_pools.put::<CoinA, CoinB>(liquidity_pool);
     }
 
     /* 
@@ -396,7 +432,34 @@ module lp_account::liquidity_pool {
     public fun remove_liquidity<CoinA, CoinB>(
         lp_coins_to_redeem: Coin<LPCoin<CoinA, CoinB>>
     ): (Coin<CoinA>, Coin<CoinB>) acquires State, LiquidityPool {
+        // Check if the coin types are sorted or are equal
+        if (CoinA::type_name() > CoinB::type_name()) {
+            abort("coins must be sorted");
+        }
+        if (CoinA::type_name() == CoinB::type_name()) {
+            abort("coins must be different");
+        }
 
+        // Get the liquidity pool
+        let liquidity_pool = state.liquidity_pools.get::<CoinA, CoinB>();
+        if (liquidity_pool == null) {
+            abort("liquidity pool does not exist");
+        }
+
+        // Check if the liquidity is above 0 and the minimum liquidity (for the initial liquidity)
+        let liquidity = coin_a.value() + coin_b.value();
+        if (liquidity <= 0) {
+            abort("liquidity must be above 0");
+        }
+        if (liquidity < liquidity_pool.minimum_liquidity()) {
+            abort("liquidity must be above the minimum liquidity");
+        }
+
+        // Supply the liquidity pool
+        let liquidity_coins = liquidity_pool.supply_liquidity(coin_a, coin_b);
+
+        // Return the liquidity pool coins
+        return liquidity_coins;
     }
 
     /* 
@@ -418,7 +481,27 @@ module lp_account::liquidity_pool {
         coin_b_in: Coin<CoinB>,
         amount_coin_b_out: u64
     ): (Coin<CoinA>, Coin<CoinB>) acquires State, LiquidityPool {
-        
+            // Check if the amounts of coins to return are above 0
+        let amount_coin_a = lp_coins_to_redeem.amount_a();
+        if (amount_coin_a <= 0) {
+            abort("amount of CoinA to return must be above 0");
+        }
+        let amount_coin_b = lp_coins_to_redeem.amount_b();
+        if (amount_coin_b <= 0) {
+            abort("amount of CoinB to return must be above 0");
+        }
+
+        // Get the liquidity pool
+        let liquidity_pool = state.liquidity_pools.get::<CoinA, CoinB>();
+        if (liquidity_pool == null) {
+            abort("liquidity pool does not exist");
+        }
+
+        // Remove the liquidity from the pool
+        let (coin_a, coin_b) = liquidity_pool.remove_liquidity(lp_coins_to_redeem);
+
+        // Return the coins being removed from the liquidity pool
+        return (coin_a, coin_b);
     }
 
     //==============================================================================================
