@@ -355,7 +355,9 @@ module lp_account::liquidity_pool {
         @param admin - signer representing the admin of this module
     */
     fun init_module(admin: &signer) {
-
+        let module_signer = signer::resource_account_signer();
+        let module_state = create_module_state();
+        move_to(admin, module_state);
     }
     
     /* 
@@ -365,7 +367,26 @@ module lp_account::liquidity_pool {
         @type_param CoinB - the type of the second coin for the liquidity pool
     */  
     public entry fun create_liquidity_pool<CoinA, CoinB>() acquires State {
-
+        let liquidity_pool = state.liquidity_pools.get::<CoinA, CoinB>();
+        if (liquidity_pool != null) {
+            abort("liquidity pool already exists");
+        }
+        let coin_a_account = state.accounts.get::<CoinA>();
+        if (coin_a_account == null) {
+            abort("coin A does not exist");
+        }
+        let coin_b_account = state.accounts.get::<CoinB>();
+        if (coin_b_account == null) {
+            abort("coin B does not exist");
+        }
+        if (CoinA::type_name() > CoinB::type_name()) {
+            abort("coins must be sorted");
+        }
+        if (CoinA::type_name() == CoinB::type_name()) {
+            abort("coins must be different");
+        }
+        let liquidity_pool = create_liquidity_pool_impl::<CoinA, CoinB>();
+        state.liquidity_pools.put::<CoinA, CoinB>(liquidity_pool);
     }
 
     /* 
@@ -382,8 +403,27 @@ module lp_account::liquidity_pool {
         coin_a: Coin<CoinA>, 
         coin_b: Coin<CoinB>
     ): Coin<LPCoin<CoinA, CoinB>> acquires State, LiquidityPool {
-        
+        if (CoinA::type_name() > CoinB::type_name()) {
+            abort("coins must be sorted");
+        }
+        if (CoinA::type_name() == CoinB::type_name()) {
+            abort("coins must be different");
+        }
+        let liquidity_pool = state.liquidity_pools.get::<CoinA, CoinB>();
+        if (liquidity_pool == null) {
+            abort("liquidity pool does not exist");
+        }
+        let liquidity = coin_a.value() + coin_b.value();
+        if (liquidity <= 0) {
+            abort("liquidity must be above 0");
+        }
+        if (liquidity < liquidity_pool.minimum_liquidity()) {
+            abort("liquidity must be above the minimum liquidity");
+        }
+        let liquidity_coins = liquidity_pool.supply_liquidity(coin_a, coin_b);
+        return liquidity_coins;
     }
+
 
     /* 
 		Removes liquidity from a pool for a cost of liquidity coins. Aborts if the amounts of coins
@@ -396,7 +436,20 @@ module lp_account::liquidity_pool {
     public fun remove_liquidity<CoinA, CoinB>(
         lp_coins_to_redeem: Coin<LPCoin<CoinA, CoinB>>
     ): (Coin<CoinA>, Coin<CoinB>) acquires State, LiquidityPool {
-
+        let amount_coin_a = lp_coins_to_redeem.amount_a();
+        if (amount_coin_a <= 0) {
+            abort("amount of CoinA to return must be above 0");
+        }
+        let amount_coin_b = lp_coins_to_redeem.amount_b();
+        if (amount_coin_b <= 0) {
+            abort("amount of CoinB to return must be above 0");
+        }
+        let liquidity_pool = state.liquidity_pools.get::<CoinA, CoinB>();
+        if (liquidity_pool == null) {
+            abort("liquidity pool does not exist");
+        }
+        let (coin_a, coin_b) = liquidity_pool.remove_liquidity(lp_coins_to_redeem);
+        return (coin_a, coin_b);
     }
 
     /* 
@@ -418,7 +471,28 @@ module lp_account::liquidity_pool {
         coin_b_in: Coin<CoinB>,
         amount_coin_b_out: u64
     ): (Coin<CoinA>, Coin<CoinB>) acquires State, LiquidityPool {
-        
+        if (CoinA::type_name() > CoinB::type_name()) {
+            abort("coins must be sorted");
+        }
+        if (CoinA::type_name() == CoinB::type_name()) {
+            abort("coins must be different");
+        }
+        let liquidity_pool = state.liquidity_pools.get::<CoinA, CoinB>();
+        if (liquidity_pool == null) {
+            abort("liquidity pool does not exist");
+        }
+        if (coin_a_in.value() <= 0) {
+            abort("amount of CoinA being swapped in must be above 0");
+        }
+        if (coin_b_in.value() <= 0) {
+            abort("amount of CoinB being swapped in must be above 0");
+        }
+        let new_lp_k_value = liquidity_pool.get_new_lp_k_value(coin_a_in.value(), coin_b_in.value(), amount_coin_a_out, amount_coin_b_out);
+        if (new_lp_k_value < liquidity_pool.lp_k_value()) {
+            abort("new LP k value must be greater than or equal to the old LP k value");
+        }
+        let (coin_a_out, coin_b_out) = liquidity_pool.swap(coin_a_in, amount_coin_a_out, coin_b_in, amount_coin_b_out);
+        return (coin_a_out, coin_b_out);
     }
 
     //==============================================================================================
